@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Narcissists Detector for Shuiyuan（Specialized for Dark Mode）水源自贴表情筛选
-// @version      0.21
+// @name         水源自贴表情筛选（Beta版）
+// @version      0.22b
 // @namespace    http://tampermonkey.net/
-// @description  Highlight retorts that are made by the original poster to tell if a guy is a NARCISSIST (¬‿¬).
+// @description  Detect if a user has posted a retort for their own post.
 // @author       Rosmontis & Sinsimito
 // @match        https://shuiyuan.sjtu.edu.cn/*
 // @grant        none
@@ -12,29 +12,107 @@
 (function () {
   "use strict";
  
-  // 处理新的表情
-  function highlightRetortIfByOriginalPoster(retortElement) {
-    const originalPoster = retortElement.closest(".row").querySelector(".username a").textContent.trim();
-    const tooltipText = retortElement.querySelector(".post-retort__tooltip").textContent;
-    const firstUser = tooltipText.split("，")[0].split(" ")[0].trim();
-    if (firstUser === originalPoster) {
-      retortElement.style.backgroundColor = "var(--highlight-medium)";//修改背景颜色为浅色高亮
-      //retortElement.style.backgroundColor = "rgba(0, 250, 0, 0.3)"; // 修改背景颜色为半透明的绿色，更兼容暗色水源界面
-      //retortElement.style.backgroundColor = "var(--highlight)"; // 默认修改背景颜色高亮
-    }else {
-      retortElement.style.backgroundColor = ""; // 取消上色
+  // 更新的计数器
+  let retortCount = 1;
+ 
+  // CSS样式
+  const style = document.createElement("style");
+  style.textContent = `
+    .post-retort.post-retort--own {
+      background-color: var(--highlight-medium);
+    }
+  `;
+  document.head.appendChild(style);
+ 
+  // 处理帖子
+  function processPost(post) {
+    if (post.getAttribute("data-retort-count") === retortCount.toString())
+      return;
+    post.setAttribute("data-retort-count", retortCount);
+ 
+    const usernameElement = post.querySelector(".username a");
+    if (!usernameElement) return;
+    const username = usernameElement.textContent.trim();
+    const retorts = post.querySelectorAll(".post-retort");
+ 
+    retorts.forEach((retort) => {
+      const firstUser = retort
+        .querySelector(".post-retort__tooltip")
+        .textContent.split("，")[0]
+        .split(" ")[0]
+        .trim();
+      if (firstUser === username) {
+        // 给自己的表情加上类名
+        retort.classList.add("post-retort--own");
+      } else if (retort.classList.contains("post-retort--own")) {
+        // 移除之前加上的类名
+        retort.classList.remove("post-retort--own");
+      }
+ 
+      // 添加点击事件监听器
+      retort.removeEventListener("click", () => {});
+      retort.addEventListener("click", () => {
+        // 处理点击事件时延时并调用 processPost
+        retortCount++;
+        setTimeout(() => {
+          processPost(post);
+        }, 500);
+      });
+    });
+  }
+ 
+  function processNode(node) {
+    if (
+      node.nodeType === Node.ELEMENT_NODE &&
+      node.classList.contains("post-retort")
+    ) {
+      // 处理新增的表情
+      processNewRetort(node);
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const posts = node.querySelectorAll(".row");
+      // 处理所有新的帖子
+      if (posts.length) {
+        posts.forEach(processPost);
+      } else {
+        const retort = node.querySelectorAll(".post-retort");
+        // 处理所有新的表情
+        retort.forEach(processNewRetort);
+      }
     }
   }
  
-  // 定期执行的表情处理
-  function performPeriodicCheck() {
-    document.querySelectorAll(".post-retort").forEach(highlightRetortIfByOriginalPoster);
+  // 处理新的表情
+  function processNewRetort(retort) {
+    // 检测目前的更新计数器
+    const row = retort.closest(".row");
+    if (!row) return;
+    // 处理帖子
+    processPost(row);
+  }
+ 
+  // 改为监视新的表情
+  function handleNewRetorts(mutationsList, observer) {
+    retortCount++;
+    for (let mutation of mutationsList) {
+      if (mutation.type === "childList") {
+        mutation.addedNodes.forEach(processNode);
+        mutation.removedNodes.forEach((node) => {
+          if (
+            node.nodeType === Node.ELEMENT_NODE &&
+            node.classList.contains("post-retort")
+          ) {
+            // 处理删除的表情
+            processNode(mutation.target);
+          }
+        });
+      }
+    }
   }
  
   // 初始化：处理所有已有的表情
-  performPeriodicCheck();
+  document.querySelectorAll(".post-retort").forEach(processNewRetort);
  
-  // 每0.4秒执行一次表情处理（提高体验）
-  setInterval(performPeriodicCheck, 30);
- 
+  // 设置MutationObserver来监视新表情
+  const observer = new MutationObserver(handleNewRetorts);
+  observer.observe(document.body, { childList: true, subtree: true });
 })();
